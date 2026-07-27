@@ -1,0 +1,29 @@
+{
+  "name": "alkhair-functions",
+  "description": "Al-Khair Cloud Functions (Custom Claims) + Firestore rules unit tests.",
+  "engines": {
+    "node": "22"
+  },
+  "main": "lib/index.js",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest --forceExit",
+    "test:rules": "jest test/rules.spec.ts --forceExit",
+    "test:functions": "jest test/on_users_write.spec.ts test/create_donation_report.spec.ts test/on_donation_report_created.spec.ts test/generate_report.spec.ts --forceExit"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^6.1.1"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.9.0",
+    "firebase": "^11.0.0",
+    "firebase-functions-test": "^3.4.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.5",
+    "typescript": "^5.6.3"
+  },
+  "private": true
+}

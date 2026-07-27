@@ -1,0 +1,16 @@
+include: package:very_good_analysis/analysis_options.yaml
+
+analyzer:
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+    - lib/firebase_options*.dart
+  errors:
+    # Treat missing required params as error (not just hint)
+    missing_required_param: error
+
+linter:
+  rules:
+    # Relax a few very_good_analysis rules that conflict with the project conventions:
+    public_member_api_docs: false      # internal app, no pub.dev docs needed
+    lines_longer_than_80_chars: false  # Arabic strings and deep widget trees exceed 80 chars routinely

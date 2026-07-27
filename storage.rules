@@ -1,0 +1,12 @@
+rules_version = '2';
+
+// Default-deny Storage rules (Phase 2 placeholder). No client Storage use yet;
+// this exists primarily to drive default-bucket provisioning via the CLI.
+// Real rules (e.g. donation photos) will be added when a Storage feature lands.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

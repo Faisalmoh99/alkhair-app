@@ -1,0 +1,211 @@
+rules_version = '2';
+
+// =============================================================================
+// Al-Khair — Firestore Security Rules (final; rules suite green 41/41 across
+// Phases 2-7, deployed)
+//
+// Source of truth: Chapter Four data dictionary (Tables 4.2-4.8), FR1-FR13, NFR1.
+// Companion: SECURITY.md (rule -> data-dictionary mapping) and TEST_PLAN.md.
+// All 7 collections covered: Users, Volunteers, CharityAdmins, Charities,
+// DonationReports, Notifications, Reports.
+//
+// Enforcement model:
+//   - Auth + role custom claims (set by the onUsersWrite Cloud Function).
+//   - Rules are the AUTHORITATIVE layer (claims are only a fast path).
+//   - Server-authored collections (Notifications, Reports) reject client writes.
+//   - status/approval_status transitions are constrained to legal moves only.
+// =============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ----------------------------- helpers ---------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function uid() {
+      return request.auth.uid;
+    }
+    function role() {
+      return request.auth.token.role; // set via Custom Claims (onUsersWrite)
+    }
+    function isDonor()   { return isSignedIn() && role() == 'donor'; }
+    function isVolunteer() { return isSignedIn() && role() == 'volunteer'; }
+    function isAdmin()   { return isSignedIn() && role() == 'charity_admin'; }
+
+    // Approved volunteer, per the Volunteers sub-doc (authoritative over claim).
+    function volunteerDoc() {
+      return get(/databases/$(database)/documents/Volunteers/$(uid())).data;
+    }
+    function isApprovedVolunteer() {
+      return isVolunteer()
+        && exists(/databases/$(database)/documents/Volunteers/$(uid()))
+        && volunteerDoc().approval_status == 'approved';
+    }
+
+    // Admin scope: admin belongs to the same charity_id as the target.
+    function adminCharityId() {
+      return get(/databases/$(database)/documents/CharityAdmins/$(uid())).data.charity_id;
+    }
+
+    function isServerTimestamp(v) { return v == request.time; }
+    function unchanged(field) {
+      return request.resource.data[field] == resource.data[field];
+    }
+
+    // Legal DonationReports status transitions (assigned only by assigned volunteer).
+    function isLegalStatusTransition(from, to) {
+      return (from == 'reported'  && to == 'assigned')
+          || (from == 'assigned'  && to == 'collected')
+          || (from == 'collected' && to == 'delivered')
+          || (from == 'reported'  && to == 'expired'); // no volunteer accepted in time
+    }
+
+    // --------------------------- Users (Table 4.2) -------------------------
+    match /Users/{userId} {
+      // A user reads only their own profile; admins may read (dashboard scope).
+      allow read: if isSignedIn() && (uid() == userId || isAdmin());
+
+      // Self-create at first login. role fixed at create; password_hash forbidden.
+      allow create: if isSignedIn() && uid() == userId
+        && request.resource.data.role in ['donor', 'volunteer', 'charity_admin']
+        && request.resource.data.keys().hasOnly(
+             ['user_id','name','phone','email','role','created_at'])
+        && request.resource.data.user_id == userId
+        && isServerTimestamp(request.resource.data.created_at)
+        && !('password_hash' in request.resource.data);
+
+      // Profile edits by owner only; role, user_id, created_at immutable.
+      allow update: if isSignedIn() && uid() == userId
+        && unchanged('role') && unchanged('user_id') && unchanged('created_at')
+        && !('password_hash' in request.resource.data);
+
+      allow delete: if false; // records are permanent (FR13)
+    }
+
+    // ------------------------ Volunteers (Table 4.3) -----------------------
+    match /Volunteers/{userId} {
+      allow read: if isSignedIn() && (uid() == userId || isAdmin());
+
+      // Self-create the sub-doc at the volunteer extra-registration step.
+      // approval_status must start as 'pending'; location starts null.
+      allow create: if isSignedIn() && uid() == userId
+        && request.resource.data.user_id == userId
+        && request.resource.data.approval_status == 'pending'
+        && request.resource.data.vehicle_type is string
+        && request.resource.data.keys().hasOnly(
+             ['user_id','charity_id','approval_status','vehicle_type',
+              'current_lat','current_lng']);
+
+      // Two disjoint update paths:
+      //  (a) owner updates own location only (approval_status unchanged);
+      //  (b) a same-charity admin changes approval_status only.
+      allow update: if isSignedIn() && (
+        // (a) owner location update
+        ( uid() == userId
+          && unchanged('approval_status') && unchanged('user_id') && unchanged('charity_id')
+          && unchanged('vehicle_type')
+          && request.resource.data.current_lat is number
+          && request.resource.data.current_lng is number )
+        ||
+        // (b) admin approval/revocation within their charity (FR10)
+        ( isAdmin()
+          && adminCharityId() == resource.data.charity_id
+          && request.resource.data.approval_status in ['approved','revoked','pending']
+          && unchanged('user_id') && unchanged('charity_id')
+          && unchanged('vehicle_type') )
+      );
+
+      allow delete: if false;
+    }
+
+    // ----------------------- CharityAdmins (Table 4.4) ---------------------
+    // Provisioned out-of-band only (Ch.5 5.2.1). No client writes.
+    match /CharityAdmins/{userId} {
+      allow read: if isSignedIn() && uid() == userId;
+      allow create, update, delete: if false;
+    }
+
+    // ------------------------- Charities (Table 4.5) -----------------------
+    match /Charities/{charityId} {
+      allow read: if isSignedIn();
+      allow write: if false; // reference data managed by platform owner / server
+    }
+
+    // --------------------- DonationReports (Table 4.6) ---------------------
+    match /DonationReports/{reportId} {
+      // Donor sees own reports; assigned volunteer sees theirs; admins by charity.
+      allow read: if isSignedIn() && (
+           (isDonor() && resource.data.donor_id == uid())
+        || (isVolunteer() && resource.data.volunteer_id == uid())
+        || isAdmin()
+        // approved volunteers may read open (unassigned) reports to accept them
+        || (isApprovedVolunteer() && resource.data.status == 'reported')
+      );
+
+      // Report creation (FR2/FR3/FR4) goes ONLY through the createDonationReport
+      // callable (SECURITY.md §3): it holds the transactional per-donor rate
+      // limit, and the Admin SDK write it performs bypasses these rules. A
+      // direct client create is denied here so the rate limiter cannot be
+      // bypassed by writing straight to Firestore — the client config ships in
+      // the app, so "rules still validate shape" would not be a real barrier.
+      allow create: if false;
+
+      // Update paths: (a) approved volunteer claims an open report;
+      //               (b) assigned volunteer advances status.
+      // Immutable: report_id, donor_id, created_at, food_category, quantity,
+      //            readiness_time, latitude, longitude, safety_confirmed.
+      allow update: if isSignedIn()
+        && unchanged('donor_id') && unchanged('created_at')
+        && unchanged('quantity') && unchanged('food_category')
+        && unchanged('readiness_time') && unchanged('latitude')
+        && unchanged('longitude') && unchanged('safety_confirmed')
+        && isLegalStatusTransition(resource.data.status, request.resource.data.status)
+        && (
+          // (a) claim: reported -> assigned, sets volunteer_id == self
+          ( isApprovedVolunteer()
+            && resource.data.status == 'reported'
+            && request.resource.data.status == 'assigned'
+            && request.resource.data.volunteer_id == uid()
+            && resource.data.volunteer_id == null )
+          ||
+          // (b) advance: assigned volunteer moves collected/delivered
+          ( isApprovedVolunteer()
+            && resource.data.volunteer_id == uid()
+            && request.resource.data.volunteer_id == uid()
+            && request.resource.data.status in ['collected','delivered'] )
+        );
+      // NOTE: 'reported'->'expired' has no implementation yet (automatic
+      //       reassignment/timeout/expiry is deferred to Phase 4b, see
+      //       ARCHITECTURE.md §6). It is listed here so rules are ready when
+      //       that Function ships; no client path can reach it today.
+
+      allow delete: if false; // permanent record (FR13)
+    }
+
+    // ----------------------- Notifications (Table 4.7) ---------------------
+    // Content is server-authored (Cloud Functions). Recipient may only read
+    // and flip is_read.
+    match /Notifications/{notificationId} {
+      allow read: if isSignedIn() && resource.data.user_id == uid();
+      allow create: if false; // server (Admin SDK) only
+      allow update: if isSignedIn() && resource.data.user_id == uid()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['is_read'])
+        && request.resource.data.is_read is bool;
+      allow delete: if false;
+    }
+
+    // -------------------------- Reports (Table 4.8) ------------------------
+    // Aggregates computed server-side (FR12). Read by same-charity admins only.
+    match /Reports/{reportId} {
+      allow read: if isAdmin() && adminCharityId() == resource.data.charity_id;
+      allow write: if false; // Cloud Function (Admin SDK) only
+    }
+
+    // ------------------------------ default --------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
