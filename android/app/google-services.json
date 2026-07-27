@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "607618058479",
+    "project_id": "alkhair-bisha-dev",
+    "storage_bucket": "alkhair-bisha-dev.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:607618058479:android:ef6a5c263557a48649731a",
+        "android_client_info": {
+          "package_name": "com.alkhair.alkhair_app.dev"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAIA1x5QhNWu79oefFwFbN-V7lTqmlZlHs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

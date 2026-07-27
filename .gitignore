@@ -55,7 +55,6 @@ firebase-debug.log
 # Al-Khair secrets (SECURITY.md §6) — never commit these
 env/
 *.keystore
-google-services.json
 GoogleService-Info.plist
 # The generated firebase_options.dart with real prod keys should NOT be committed
 # if the project opts for CI injection. Dev options are safe to commit.
