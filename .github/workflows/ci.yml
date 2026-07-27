@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  secret-safety-check:
+    name: Fail if secret files are tracked
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for files that must never be tracked
+        run: |
+          set -e
+          failed=0
+
+          check_exact() {
+            if git ls-files --error-unmatch "$1" > /dev/null 2>&1; then
+              echo "::error::Tracked file must not be committed: $1"
+              failed=1
+            fi
+          }
+
+          check_pattern() {
+            local pattern="$1"
+            local matches
+            matches=$(git ls-files | grep -E "$pattern" || true)
+            if [ -n "$matches" ]; then
+              echo "::error::Tracked file(s) match forbidden pattern '$pattern':"
+              echo "$matches"
+              failed=1
+            fi
+          }
+
+          check_exact "android/app/google-services.json"
+          check_exact "ios/Runner/GoogleService-Info.plist"
+          check_pattern '(^|/)serviceAccountKey\.json$'
+          check_pattern '(^|/)[^/]*-credentials\.json$'
+          check_pattern '(^|/)\.env(\..*)?$'
+
+          key_matches=$(git grep -lI "BEGIN PRIVATE KEY" -- . || true)
+          if [ -n "$key_matches" ]; then
+            echo "::error::Tracked file(s) contain a private key marker (BEGIN PRIVATE KEY):"
+            echo "$key_matches"
+            failed=1
+          fi
+
+          if [ "$failed" -ne 0 ]; then
+            echo "Secret safety check failed: forbidden files are tracked by git." >&2
+            exit 1
+          fi
+
+          echo "Secret safety check passed."
