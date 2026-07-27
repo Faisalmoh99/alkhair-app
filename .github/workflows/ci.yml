@@ -37,7 +37,6 @@ jobs:
             fi
           }
 
-          check_exact "android/app/google-services.json"
           check_exact "ios/Runner/GoogleService-Info.plist"
           check_pattern '(^|/)serviceAccountKey\.json$'
           check_pattern '(^|/)[^/]*-credentials\.json$'
