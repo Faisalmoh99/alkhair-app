@@ -42,7 +42,7 @@ jobs:
           check_pattern '(^|/)[^/]*-credentials\.json$'
           check_pattern '(^|/)\.env(\..*)?$'
 
-          key_matches=$(git grep -lI "BEGIN PRIVATE KEY" -- . || true)
+          key_matches=$(git grep -lI "BEGIN PRIVATE KEY" -- . ':(exclude).github/workflows/ci.yml' || true)
           if [ -n "$key_matches" ]; then
             echo "::error::Tracked file(s) contain a private key marker (BEGIN PRIVATE KEY):"
             echo "$key_matches"
