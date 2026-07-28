@@ -337,6 +337,14 @@ never touches Firestore.
     needed for those Global delegates — RTL/date-picker/Material-widget support). This also fully
     sidesteps the Windows synthetic-package `gen_l10n` bug (flutter/flutter#162936) rather than
     working around it.
+11. **Android manifest location-permission parity gap, fixed.** `AndroidManifest.xml` had zero
+    `<uses-permission>` entries — the Android counterpart of the Phase 7 iOS
+    `NSLocationWhenInUseUsageDescription` fix was never mirrored, since all prior E2E testing ran
+    on iOS Simulator only. `ACCESS_FINE_LOCATION`/`ACCESS_COARSE_LOCATION` added; both donor report
+    submission (FR3) and the volunteer manual "تحديث موقعي" refresh (Phase 7 Part A1) share the
+    same `GeolocatorLocationService`, so one fix covers both call sites. Regression-guarded by
+    `test/android_manifest_test.dart` (asserts the manifest text contains both permission strings —
+    the mocked-`LocationService` unit tests can't otherwise catch a missing native manifest entry).
 
 ## 7. Visual identity (Chapter Five + kickoff)
 
