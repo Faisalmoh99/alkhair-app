@@ -78,6 +78,23 @@ Future<void> _initFirebase(FirebaseOptions options) async {
     }
   }
 
+  if (defaultTargetPlatform == TargetPlatform.android) {
+    // Play Integrity is broken on Android emulators (multiple confirmed
+    // external reports) — the cloudProjectNumber mismatch investigated
+    // separately turned out not to be a repo-config issue. This forces the
+    // same web reCAPTCHA verification path iOS already falls back to, for
+    // both real and test numbers, real cloud and emulator alike. Unconditional
+    // on Android by design — see ARCHITECTURE.md §6: real attestation
+    // (Play Integrity/App Attest) is already out of scope for this one-time
+    // graduation demo, so there's no separate "production" UX to protect.
+    try {
+      await FirebaseAuth.instance.setSettings(forceRecaptchaFlow: true);
+      debugPrint('[Al-Khair] setSettings(forceRecaptchaFlow: true) OK (Android)');
+    } on Object catch (e, st) {
+      debugPrint('[Al-Khair] setSettings(forceRecaptchaFlow) FAILED: $e\n$st');
+    }
+  }
+
   try {
     // Debug providers only — see ARCHITECTURE.md §6 (consolidation decision):
     // real attestation (Play Integrity / App Attest) is out of scope for the
