@@ -393,6 +393,25 @@ never touches Firestore.
       rotated, and `Secrets.xcconfig` untracked + gitignored, after the demo recording and
       submission are done — not before, since the app depends on both keys being live for the
       recording.**
+14. **Real-phone-number-on-Android-emulator investigation — CLOSED, not fully fixed, deliberately
+    not pursued further.**
+    - `forceRecaptchaFlow: true` (added for Android in `lib/bootstrap.dart`, see the commit
+      pending-verification note) is **confirmed working**: it bypasses the broken Play Integrity
+      path on emulators, matching iOS's existing reCAPTCHA fallback behavior. This stays as a
+      genuine improvement.
+    - The Android API key's **Application restriction was relaxed from "Android apps" to
+      "None"** (API restrictions themselves unchanged) per official Firebase guidance —
+      Android-app-restricted keys are fundamentally incompatible with the WebView-based reCAPTCHA
+      flow. Real security remains enforced via `firestore.rules` and Cloud Functions validation,
+      not this key restriction.
+    - **Remaining blocker, root-caused and accepted as out of scope:** the reCAPTCHA challenge
+      WebView renders as a blank white screen specifically on the Android Emulator (AVD) — a known
+      environment-level rendering limitation, not a code or config defect. Real physical Android
+      devices are expected to render this correctly.
+    - **Decision: stop pursuing this further.** Firebase Console test phone numbers remain the
+      standard, fully-reliable method for all Android emulator testing and demo recording going
+      forward. **Flag for Chapter Six:** document as a known Android-emulator platform limitation,
+      not a project defect.
 
 ## 7. Visual identity (Chapter Five + kickoff)
 
