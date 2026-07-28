@@ -56,6 +56,10 @@ firebase-debug.log
 env/
 *.keystore
 GoogleService-Info.plist
+# Shared debug-only signing keystore (universal default debug credentials,
+# not a real secret) — intentionally tracked so real phone-number sign-in
+# works across the whole team without per-machine Firebase SHA registration.
+!/android/debug.keystore
 # The generated firebase_options.dart with real prod keys should NOT be committed
 # if the project opts for CI injection. Dev options are safe to commit.
 # lib/firebase_options_prod.dart

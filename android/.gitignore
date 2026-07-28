@@ -12,3 +12,6 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+# Exception: the shared debug-only signing keystore is intentionally tracked
+# (universal default debug credentials, not a real secret) — see root .gitignore.
+!debug.keystore

@@ -345,6 +345,16 @@ never touches Firestore.
     same `GeolocatorLocationService`, so one fix covers both call sites. Regression-guarded by
     `test/android_manifest_test.dart` (asserts the manifest text contains both permission strings —
     the mocked-`LocationService` unit tests can't otherwise catch a missing native manifest entry).
+12. **Shared debug-only signing keystore, `android/debug.keystore`, committed.** Previously every
+    teammate's machine auto-generated its own unique debug certificate, so Firebase rejected real
+    (non-test) phone-number sign-in with `app-not-authorized` unless each machine's SHA-1/SHA-256
+    was individually registered in Firebase Console. A single keystore (standard debug credentials
+    — `storePassword`/`keyPassword` "android", alias `androiddebugkey` — the universal Android
+    debug-key default, not a secret) is now committed and wired via an explicit
+    `signingConfigs.sharedDebug` in `android/app/build.gradle.kts`, used by the `debug` buildType
+    only. **Deliberately not reused by `release`**, which keeps AGP's own machine-local default
+    `debug` signingConfig — committing this file for team debug-build convenience must not also
+    widen what a real release APK can be signed with.
 
 ## 7. Visual identity (Chapter Five + kickoff)
 
