@@ -1,3 +1,6 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // START: FlutterFire Configuration
@@ -6,6 +9,16 @@ plugins {
     // END: FlutterFire Configuration
     id("kotlin-android")
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+// Maps SDK key, never committed — same env/ convention documented in
+// SECURITY.md §6 (mirrors --dart-define-from-file for platform-native
+// config dart-define alone can't reach). Substituted into
+// AndroidManifest.xml's ${MAPS_API_KEY_ANDROID} placeholder below.
+val androidSecretsFile = rootProject.file("../env/android_secrets.properties")
+val androidSecrets = Properties()
+if (androidSecretsFile.exists()) {
+    FileInputStream(androidSecretsFile).use { androidSecrets.load(it) }
 }
 
 android {
@@ -29,6 +42,8 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["MAPS_API_KEY_ANDROID"] =
+            androidSecrets.getProperty("MAPS_API_KEY_ANDROID", "")
     }
 
     signingConfigs {

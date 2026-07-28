@@ -355,6 +355,44 @@ never touches Firestore.
     only. **Deliberately not reused by `release`**, which keeps AGP's own machine-local default
     `debug` signingConfig — committing this file for team debug-build convenience must not also
     widen what a real release APK can be signed with.
+13. **iOS/Android native-config parity, audited and closed out as a category** (three gaps hit
+    this session alone, all traceable to the same root cause: every prior E2E run was on iOS
+    Simulator only, so Android-only native-config gaps went undetected until an actual Android run
+    would have crashed). Fixed:
+    - **Location permission crash** — `AndroidManifest.xml` had zero `<uses-permission>` entries;
+      Android counterpart of the Phase 7 `NSLocationWhenInUseUsageDescription` fix, never mirrored.
+      `ACCESS_FINE_LOCATION`/`ACCESS_COARSE_LOCATION` added (covers both donor report submission
+      and the volunteer manual location refresh — same shared `GeolocatorLocationService`).
+    - **Maps SDK key crash** (`IllegalStateException: API key not found`) — Android had no
+      `com.google.android.geo.API_KEY` meta-data at all. Added, sourced from a new gitignored
+      `env/android_secrets.properties` (never committed), substituted via
+      `manifestPlaceholders["MAPS_API_KEY_ANDROID"]` in `android/app/build.gradle.kts` — **not**
+      copied from iOS's actual (broken) pattern; see the flagged item below.
+    - **Missing `INTERNET` permission** — found during the audit, not requested by name. Neither
+      `firebase_core` nor `google_maps_flutter_android`'s own plugin manifests declare it (checked
+      directly in `pub-cache`), and the app's own manifest never did either. Without it, every
+      Firebase network call and all Maps tiles would fail on Android — iOS needs no Info.plist
+      equivalent (HTTPS access is sandboxed-default). Added.
+    - Regression-guarded by `test/android_manifest_test.dart` (checks manifest text for all three).
+    - **Confirmed as needing no Android counterpart** (asymmetric by platform architecture, not an
+      oversight): `CFBundleURLTypes`'s Firebase-generated URL scheme (iOS-only phone-auth
+      reCAPTCHA-callback requirement — Android's Firebase Auth SDK uses Play
+      Integrity/SafetyNet instead, no custom scheme; confirmed no Google Sign-In/deep-link code
+      exists in `lib/` either); `CADisableMinimumFrameDurationOnPhone` (iOS ProMotion-display-only
+      API); `LSRequiresIPhoneOS`; all `CFBundle*`/`UIApplicationSceneManifest`/storyboard/scene keys
+      (standard iOS bundle plumbing — Android's equivalent is `applicationId`/`versionCode`/
+      `versionName` in `build.gradle.kts` plus `android:label`, already present); iOS's explicit
+      `UISupportedInterfaceOrientations` list (Android's default unspecified orientation already
+      permits free rotation, an equivalent-enough outcome with no explicit config needed).
+    - **⚠️ Known pending security cleanup, deliberately deferred — do not act on this before the
+      demo recording and submission are complete.** `ios/Flutter/Secrets.xcconfig` has been
+      git-tracked with a **plaintext Maps API key** since the initial commit (`14579b8`) — exposed
+      in this repo's history — despite `SECURITY.md §6` explicitly documenting that Maps keys are
+      "never committed." A second Maps key (Android, wired this session) was also pasted directly
+      into a chat session rather than a local file, so treat it as exposed too. **Both keys must be
+      rotated, and `Secrets.xcconfig` untracked + gitignored, after the demo recording and
+      submission are done — not before, since the app depends on both keys being live for the
+      recording.**
 
 ## 7. Visual identity (Chapter Five + kickoff)
 
