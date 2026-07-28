@@ -329,6 +329,14 @@ never touches Firestore.
      submissions, all reaching `delivered`), including direct confirmation via Cloud Functions
      logs that `onDonationReportCreated` actually fires in `europe-west1` off the `europe-west1`
      database — the specific mechanism this migration depended on working.
+10. **Removed unused `l10n`/`.arb` codegen scaffolding** (`l10n.yaml`, `lib/l10n/app_ar.arb`,
+    `lib/l10n/app_localizations*.dart`, `generate: true`) — never wired into `MaterialApp`
+    (`bootstrap.dart` only uses `GlobalMaterialLocalizations`/`GlobalWidgetsLocalizations`/
+    `GlobalCupertinoLocalizations` delegates directly), and NFR4 only requires a single fixed
+    Arabic UI, not runtime locale switching. `flutter_localizations` itself is retained (still
+    needed for those Global delegates — RTL/date-picker/Material-widget support). This also fully
+    sidesteps the Windows synthetic-package `gen_l10n` bug (flutter/flutter#162936) rather than
+    working around it.
 
 ## 7. Visual identity (Chapter Five + kickoff)
 

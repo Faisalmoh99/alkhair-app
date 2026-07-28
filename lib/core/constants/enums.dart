@@ -35,7 +35,7 @@ enum ApprovalStatus {
 
 /// DonationReports.status (Table 4.6).
 /// Transitions: reported → assigned → collected → delivered | reported → expired.
-/// UI Arabic labels are defined in app_ar.arb; this enum is the data-layer source of truth.
+/// UI Arabic labels are hardcoded per-screen; this enum is the data-layer source of truth.
 enum DonationStatus {
   reported,
   assigned,
