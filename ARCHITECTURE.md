@@ -395,10 +395,14 @@ never touches Firestore.
       recording.**
 14. **Real-phone-number-on-Android-emulator investigation — CLOSED, not fully fixed, deliberately
     not pursued further.**
-    - `forceRecaptchaFlow: true` (added for Android in `lib/bootstrap.dart`, see the commit
-      pending-verification note) is **confirmed working**: it bypasses the broken Play Integrity
-      path on emulators, matching iOS's existing reCAPTCHA fallback behavior. This stays as a
-      genuine improvement.
+    - `forceRecaptchaFlow: true` (added for Android in `lib/bootstrap.dart`) was **reverted**
+      (commit `a4a537a`, reverting `2fc3b65`). Real-device/emulator testing on Windows showed it
+      never actually fixed the real-number case — the WebView still renders blank on the Android
+      Emulator (see remaining blocker below) — while it **did** regress the previously-working
+      Firebase Console test-number path: test numbers used to return the fixed code instantly with
+      no browser involved, but with this setting applied unconditionally to all Android phone
+      numbers, they also started forcing an external Chrome browser during verification. Net
+      negative — reverted, not worth keeping.
     - The Android API key's **Application restriction was relaxed from "Android apps" to
       "None"** (API restrictions themselves unchanged) per official Firebase guidance —
       Android-app-restricted keys are fundamentally incompatible with the WebView-based reCAPTCHA
