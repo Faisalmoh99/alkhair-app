@@ -37,6 +37,7 @@ FirebaseFunctions firebaseFunctions(FirebaseFunctionsRef ref) =>
 AuthRepository authRepository(AuthRepositoryRef ref) => FirebaseAuthRepository(
       auth: ref.watch(firebaseAuthProvider),
       firestore: ref.watch(firestoreProvider),
+      functions: ref.watch(firebaseFunctionsProvider),
     );
 
 /// Device GPS capture (FR3). Overridden with a mock in unit tests.

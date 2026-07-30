@@ -12,8 +12,13 @@
  *
  * Phase 6: server-side report aggregation (FR12) — writes the Reports
  * collection (Table 4.8) on export; the read-side screens aggregate live.
+ *
+ * Username+password auth, no phone/OTP verification (ARCHITECTURE.md §6):
+ * `checkPhoneRegistered` remains as a plain duplicate-phone uniqueness check
+ * at sign-up.
  */
 export { onUsersWrite, onVolunteerWrite } from './on_users_write';
 export { createDonationReport } from './create_donation_report';
 export { onDonationReportCreated } from './on_donation_report_created';
 export { generateReport } from './generate_report';
+export { checkPhoneRegistered } from './check_phone_registered';

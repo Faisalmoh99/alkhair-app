@@ -11,14 +11,9 @@ abstract interface class AuthRepository {
   /// Emits the current signed-in uid, or null when signed out.
   Stream<String?> authStateChanges();
 
-  /// Sends an OTP to [phone]. On `codeSent`, returns the verificationId.
-  Future<Either<Failure, String>> requestOtp(String phone);
-
-  /// Confirms [smsCode] against [verificationId] and signs in; returns the uid.
-  Future<Either<Failure, String>> confirmOtp({
-    required String verificationId,
-    required String smsCode,
-  });
+  /// Sign-up duplicate-phone pre-check: phone numbers must be unique across
+  /// `Users` even though they are no longer verified.
+  Future<Either<Failure, bool>> checkPhoneRegistered(String phone);
 
   /// Loads the profile for [uid]; returns null when no `Users` doc exists yet.
   Future<Either<Failure, AppUser?>> loadProfile(String uid);
@@ -28,7 +23,23 @@ abstract interface class AuthRepository {
     required String uid,
     required String name,
     required String phone,
+    required String username,
     required UserRole role,
+  });
+
+  /// Creates the Firebase Auth account directly with the chosen
+  /// username+password (mapped to a synthetic email, SECURITY.md §1). Returns
+  /// the uid on success. `email-already-in-use`/`credential-already-in-use`
+  /// means the username is taken.
+  Future<Either<Failure, String>> createUserWithUsernamePassword({
+    required String username,
+    required String password,
+  });
+
+  /// Username + password login (maps to the synthetic email internally).
+  Future<Either<Failure, String>> signInWithUsernamePassword({
+    required String username,
+    required String password,
   });
 
   /// Volunteer extra step (SECURITY.md §1.3): updates `Users.email` and creates

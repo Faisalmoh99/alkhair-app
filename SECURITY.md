@@ -9,77 +9,84 @@ Backing NFR: **NFR1** — signed tokens, role-based access control, HTTPS in tra
 
 ---
 
-## 1. Authentication — unified Phone Auth + OTP (FR1)
+## 1. Authentication — username + password, with Phone OTP as sign-up/reset verification (FR1)
 
-### 1.1 Single entry point (no conflict with Chapter Five)
+> **Supersedes the original "unified Phone Auth + OTP as the login mechanism" design** — changed
+> per supervisor direction; see ARCHITECTURE.md §6 item 15 for the full rationale and the
+> data-dictionary reinterpretations this required. This section describes the **current** model.
 
-There is **one** sign-in mechanism for all three roles: Firebase **Phone Auth + OTP**, matching
-FR1 ("mobile-verified account") and Chapter Five §5.2.1 ("single entry point shared by all three
-user roles"). The **"password" field shown in the Figure 5.1 mockup is implemented as the OTP
-code-entry field** — the same masked-dot display pattern — **not a real password**. Therefore the
-entry point genuinely remains singular and there is **no actual conflict** with §5.2.1.
-`Users.password_hash` (Table 4.2) is **never written by the app**: Firebase Authentication manages
-credentials internally, so the field is treated as a vestigial data-dictionary artifact
-superseded by the mobile-verification model of FR1.
+### 1.1 Login vs. verification are separate concerns
 
-Charity administrators are **provisioned out-of-band** by the platform owner (Ch.5 §5.2.1 — the
-`CharityAdmins` record has no public creation path). Their sign-in still uses the same OTP flow.
+**Login** is username + password (Firebase Email/Password auth under the hood — see 1.4 for the
+synthetic-email mapping). **Phone OTP is not the login mechanism.** It appears in exactly two
+places: as a mandatory **sign-up verification gate** (1.2) and as the verification step for
+**forgot-password** (1.3). No OTP is involved in ordinary login.
 
-### 1.2 OTP state machine
+`Users.password_hash` (Table 4.2) is still **never written by the app**: the password lives in
+Firebase Auth, not Firestore — `firestore.rules` continues to forbid the field on the `Users` doc.
 
-```
-IDLE
-  └─ submit phone → REQUESTING_OTP
-       ├─ success → OTP_SENT (start 60s resend cooldown; code TTL = 5 min, Firebase-enforced)
-       └─ failure → ERROR (invalid number / App Check failed / rate-limited)  → IDLE
-OTP_SENT
-  ├─ enter code → VERIFYING
-  │    ├─ success → onLoginSuccess()  (see 1.3)
-  │    ├─ invalid code → OTP_SENT (show Arabic error, allow retry; N-attempt cap → LOCKED_TEMP)
-  │    └─ expired → EXPIRED  → allow resend
-  ├─ resend (after cooldown) → REQUESTING_OTP
-  └─ timeout (TTL elapsed) → EXPIRED
-LOCKED_TEMP → cooldown window (backoff) → IDLE
-```
+Charity administrators remain **provisioned out-of-band** by the platform owner (Ch.5 §5.2.1 —
+the `CharityAdmins` record has no public creation path) and are excluded from the self-signup
+form entirely; `firestore.rules`' `Users` create rule only allows `role in ['donor','volunteer']`.
 
-**Failure states & handling:**
-- Invalid phone format → client validator blocks before request (Arabic message).
-- OTP expiry → Firebase reports `session-expired`; UI moves to `EXPIRED`, offers resend.
-- Resend logic → disabled until the 60s cooldown elapses; exponential backoff after repeated
-  requests (see Rate Limiting §3).
-- Wrong code → `invalid-verification-code`; counted toward the per-session attempt cap.
-- App Check rejection → request never reaches Auth (see §5).
-
-### 1.3 First successful login — document creation (resolved decision)
-
-Role/registration divergence happens **only after OTP success**, never in the sign-in mechanism.
+### 1.2 Sign-up (OTP as a verification gate, not the login method)
 
 ```
-onLoginSuccess(uid, phone):
-  if Users/{uid} exists → route by existing role.       # returning user
-  else → account-type selector (donor | volunteer) from Figure 5.1:
-    DONOR:
-      create Users/{uid} = { name, phone, role: "donor", created_at: serverTimestamp() }
-      → registration complete → donor home.
-    VOLUNTEER:
-      create Users/{uid} = { name, phone, role: "volunteer", created_at: serverTimestamp() }
-      → EXTRA registration step (logically part of Screen 1, not a new screen):
-          collect email (required, Table 4.2) + vehicle_type
-          # email belongs to Users (Table 4.2), NOT Volunteers (Table 4.3):
-          update Users/{uid}     = { email }        # permitted by the Users update rule (owner)
-          create Volunteers/{uid} = {
-            user_id: uid, charity_id: <selected/assigned>,
-            approval_status: "pending",         # auto — cannot be set by client to approved
-            vehicle_type, current_lat: null, current_lng: null }
-      → "awaiting approval" state; not eligible for alerts until approved (FR10 → Fig 5.4).
+SignUpForm(username, password, name, phone, role[donor|volunteer], + role-specific fields)
+  submit → hold form in memory ONLY (no Firebase Auth account, no Firestore doc yet)
+         → requestOtp(phone)  [existing OTP send/verify/resend/cooldown mechanism, unmodified]
+OTP verify success:
+  → linkWithCredential(EmailAuthProvider({username}@alkhair-app.internal, password))
+      onto the OTP-verified phone-auth user (Firebase OTP inherently signs in a phone-auth
+      account; linking avoids a second, orphaned account)
+      ├─ email-already-in-use → "username already taken" (surfaced ONLY here, after OTP, never
+      │    before — Firebase's own uniqueness check, no separate manual Firestore check)
+      └─ success →
+  → create Users/{uid} = { name, phone, username, phone_verified: true, role, created_at }
+    (phone_verified: true is baked in from creation — there is no unverified-account state)
+  → VOLUNTEER only: update Users/{uid} = { email }; create Volunteers/{uid} = {
+      user_id, charity_id, approval_status: "pending", vehicle_type,
+      current_lat: null, current_lng: null }
+OTP fails / expires / abandoned:
+  → no Firebase Auth account, no Firestore doc exist. User simply restarts sign-up.
+    No pending-account cleanup logic exists or is needed.
 ```
 
-This closes the "where does the volunteer's `email` come from" gap (Table 4.2 requires it for
-volunteers) **without** opening a second authentication system and **without** contradicting the
-approved Chapter Five text. The email is a `Users` profile attribute (Table 4.2), not a sign-in
-credential, and is set by updating `Users/{uid}` at the extra step — not stored on `Volunteers`.
+The OTP state machine itself (send/verify/resend-with-cooldown/lock-after-N-attempts) is
+unchanged from the original design — see the state diagram this section used to carry; it now
+gates account *creation* rather than *login*.
 
-`CharityAdmins` docs are created only by the out-of-band provisioning path, never by this flow.
+### 1.3 Forgot password (reuses the phone already on file)
+
+```
+ForgotPasswordForm(username only — phone is never re-entered)
+  submit → lookupPhoneForUsername(username)   [new callable, Admin SDK — Firestore rules only
+             let a client read its own Users doc, so this can't be a direct client query]
+  found  → requestOtp(phone)  [same OTP screen component, flowMode=passwordReset]
+             OTP verify success → signs back into the SAME uid (phone was linked to it at
+             sign-up) → updatePassword(newPassword)  [reset, not linkWithCredential — no new
+             account]
+  not found → generic "if this account exists, a code was sent" message; no OTP sent, no
+             navigation (avoids confirming/denying account existence in the UI)
+```
+
+While a reset is in flight, `passwordResetInProgress` overrides the router's normal
+role-derived stage — otherwise an *existing* user's OTP re-auth would redirect them straight to
+their home screen (their `Users` doc already exists) before they ever set a new password.
+
+### 1.4 Username → synthetic email mapping
+
+Firebase Auth has no native username provider. `{username}@alkhair-app.internal` is used
+internally for Email/Password sign-up/sign-in and is **never shown in the UI**.
+
+### 1.5 First successful login — document creation (superseded)
+
+The account-type-selector-after-login flow this subsection used to describe (`onLoginSuccess`
+branching into donor/volunteer registration) is superseded by 1.2 above: role and all
+registration fields are now collected **before** OTP, in the sign-up form itself, and the
+`Users`/`Volunteers` docs are created at OTP success rather than after a bare-phone login.
+`CharityAdmins` docs still only come from the out-of-band provisioning path, never from any
+client flow.
 
 ---
 

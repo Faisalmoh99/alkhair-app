@@ -6,11 +6,12 @@ part of 'app_router.dart';
 // RiverpodGenerator
 // **************************************************************************
 
-String _$appRouterHash() => r'35c4755fdb19727627f6fbb2d04bf6327370967d';
+String _$appRouterHash() => r'e41e2bda589c1f4e30766489edff50bf9dbb21ad';
 
-/// The app router. Redirects are driven by [authStatusControllerProvider]: the
-/// stage is bridged into a [ValueNotifier] that GoRouter listens to, so the
-/// router is created once and re-evaluates guards whenever the stage changes.
+/// The app router. Redirects are driven by [authStatusControllerProvider]
+/// and [signUpFinalizingInProgressProvider], bridged into [_RouterRefresh]
+/// so the router is created once and re-evaluates guards whenever either
+/// changes.
 ///
 /// Copied from [appRouter].
 @ProviderFor(appRouter)

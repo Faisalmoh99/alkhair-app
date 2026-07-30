@@ -124,6 +124,7 @@ describe('Users', () => {
     user_id: 'donor1',
     name: 'Faisal',
     phone: '+966500000000',
+    username: 'faisal',
     role: 'donor',
     created_at: serverTimestamp(),
   });
@@ -149,6 +150,30 @@ describe('Users', () => {
     await assertFails(
       setDoc(doc(donorCtx(), 'Users/donor1'), { ...validCreate(), role: 'superuser' }),
     );
+  });
+
+  // Username+password migration (ARCHITECTURE.md §6): charity_admin is
+  // provisioned out-of-band only — self-signup no longer offers that role,
+  // and the rule itself must reject it even if a client tried to bypass the UI.
+  it('rejects charity_admin self-create (provisioned out-of-band only)', async () => {
+    await assertFails(
+      setDoc(doc(donorCtx(), 'Users/donor1'), { ...validCreate(), role: 'charity_admin' }),
+    );
+  });
+
+  // Phone/OTP verification removed (ARCHITECTURE.md §6): phone is a plain,
+  // unverified data field, so phone_verified is no longer part of the
+  // schema and is rejected as an unexpected key.
+  it('rejects a doc containing phone_verified (no longer part of the schema)', async () => {
+    await assertFails(
+      setDoc(doc(donorCtx(), 'Users/donor1'), { ...validCreate(), phone_verified: true }),
+    );
+  });
+
+  it('rejects create without a username', async () => {
+    const withoutUsername: Record<string, unknown> = validCreate();
+    delete withoutUsername.username;
+    await assertFails(setDoc(doc(donorCtx(), 'Users/donor1'), withoutUsername));
   });
 
   it('rejects an unexpected extra key (hasOnly)', async () => {
@@ -353,7 +378,8 @@ describe('CharityAdmins', () => {
 // Charities (Table 4.5) — reference data
 // =============================================================================
 describe('Charities', () => {
-  it('signed-in users read; clients cannot write', async () => {
+  it('public read (even unauthenticated — the sign-up form loads this before '
+      + 'auth exists); clients cannot write', async () => {
     await seed(async (db) => {
       await setDoc(doc(db, `Charities/${CHARITY_A}`), {
         charity_id: CHARITY_A,
@@ -363,10 +389,10 @@ describe('Charities', () => {
       });
     });
     await assertSucceeds(getDoc(doc(donorCtx(), `Charities/${CHARITY_A}`)));
+    await assertSucceeds(getDoc(doc(anonCtx(), `Charities/${CHARITY_A}`)));
     await assertFails(
       setDoc(doc(adminCtx(), 'Charities/new'), { charity_id: 'new', name: 'x' }),
     );
-    await assertFails(getDoc(doc(anonCtx(), `Charities/${CHARITY_A}`)));
   });
 });
 

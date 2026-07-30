@@ -7,12 +7,16 @@ import 'package:flutter_test/flutter_test.dart';
 // own area; anything else redirects to that stage's home.
 void main() {
   group('allowed locations return null (no redirect)', () {
-    test('unauthenticated on sign-in / otp', () {
-      expect(authRedirect(stage: AuthStage.unauthenticated, location: Routes.signIn), isNull);
-      expect(authRedirect(stage: AuthStage.unauthenticated, location: Routes.otp), isNull);
+    test('unauthenticated on login / sign-up / forgot-password', () {
+      expect(authRedirect(stage: AuthStage.unauthenticated, location: Routes.login), isNull);
+      expect(authRedirect(stage: AuthStage.unauthenticated, location: Routes.signUp), isNull);
+      expect(
+        authRedirect(stage: AuthStage.unauthenticated, location: Routes.forgotPassword),
+        isNull,
+      );
     });
-    test('needsProfile on account-type', () {
-      expect(authRedirect(stage: AuthStage.needsProfile, location: Routes.accountType), isNull);
+    test('needsProfile stays on the sign-up screen (finishing account creation)', () {
+      expect(authRedirect(stage: AuthStage.needsProfile, location: Routes.signUp), isNull);
     });
     test('donor within /donor', () {
       expect(authRedirect(stage: AuthStage.donor, location: Routes.donorHome), isNull);
@@ -39,7 +43,7 @@ void main() {
     test('unauthenticated cannot reach a role area', () {
       expect(
         authRedirect(stage: AuthStage.unauthenticated, location: Routes.donorHome),
-        Routes.signIn,
+        Routes.login,
       );
     });
     test('donor cannot reach volunteer or admin areas', () {
@@ -72,9 +76,43 @@ void main() {
         Routes.volunteerExtra,
       );
     });
-    test('a signed-in donor is pushed off the splash/sign-in screens', () {
+    test('a signed-in donor is pushed off the splash/login screens', () {
       expect(authRedirect(stage: AuthStage.donor, location: Routes.splash), Routes.donorHome);
-      expect(authRedirect(stage: AuthStage.donor, location: Routes.signIn), Routes.donorHome);
+      expect(authRedirect(stage: AuthStage.donor, location: Routes.login), Routes.donorHome);
+    });
+  });
+
+  group('signUpFinalizingInProgress overrides the stage entirely', () {
+    test('holds on the sign-up screen regardless of the derived stage', () {
+      // Covers the account-creation race: createUserWithUsernamePassword's
+      // sign-in can make AuthStatusController briefly derive a premature
+      // stage before RegistrationController finishes writing the Users doc.
+      for (final stage in [
+        AuthStage.unauthenticated,
+        AuthStage.needsProfile,
+        AuthStage.donor,
+        AuthStage.volunteerApproved,
+        AuthStage.charityAdmin,
+      ]) {
+        expect(
+          authRedirect(
+            stage: stage,
+            location: Routes.signUp,
+            signUpFinalizingInProgress: true,
+          ),
+          isNull,
+        );
+      }
+    });
+    test('redirects any other location to the sign-up screen', () {
+      expect(
+        authRedirect(
+          stage: AuthStage.donor,
+          location: Routes.donorHome,
+          signUpFinalizingInProgress: true,
+        ),
+        Routes.signUp,
+      );
     });
   });
 }

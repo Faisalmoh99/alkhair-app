@@ -9,7 +9,7 @@
     "build": "tsc",
     "test": "jest --forceExit",
     "test:rules": "jest test/rules.spec.ts --forceExit",
-    "test:functions": "jest test/on_users_write.spec.ts test/create_donation_report.spec.ts test/on_donation_report_created.spec.ts test/generate_report.spec.ts --forceExit"
+    "test:functions": "jest test/on_users_write.spec.ts test/create_donation_report.spec.ts test/on_donation_report_created.spec.ts test/generate_report.spec.ts test/check_phone_registered.spec.ts --forceExit"
   },
   "dependencies": {
     "firebase-admin": "^12.7.0",

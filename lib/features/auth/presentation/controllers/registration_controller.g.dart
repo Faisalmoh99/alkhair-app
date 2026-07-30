@@ -6,13 +6,42 @@ part of 'registration_controller.dart';
 // RiverpodGenerator
 // **************************************************************************
 
-String _$registrationControllerHash() =>
-    r'9d549b1cf5f476f93c521bf5ac2e60188a1ad57d';
+String _$signUpFinalizingInProgressHash() =>
+    r'e22d95b1af1eac9cc5dd26a7e13defc6035ef951';
 
-/// Drives the post-OTP document creation (SECURITY.md §1.3):
-///  - donor: `createAccount(role: donor)` → Users doc, done.
-///  - volunteer: `createAccount(role: volunteer)` then `completeVolunteer(...)`
-///    which updates Users.email + creates the pending Volunteers sub-doc.
+/// True from the moment `createUserWithUsernamePassword` signs the user into
+/// Firebase Auth until `RegistrationController.createFromSignUp` finishes
+/// (success or failure). That sign-in fires `authStateChanges` immediately,
+/// before any of the in-app post-creation work below has run — without this
+/// override, the router's guard would derive a stage from whatever Firestore
+/// already has for that uid (nothing yet) and could admit the user to a
+/// premature screen before the `Users` doc (and, for volunteers, the pending
+/// `Volunteers` sub-doc) exist. See `authRedirect`'s
+/// `signUpFinalizingInProgress` parameter.
+///
+/// Copied from [SignUpFinalizingInProgress].
+@ProviderFor(SignUpFinalizingInProgress)
+final signUpFinalizingInProgressProvider =
+    AutoDisposeNotifierProvider<SignUpFinalizingInProgress, bool>.internal(
+      SignUpFinalizingInProgress.new,
+      name: r'signUpFinalizingInProgressProvider',
+      debugGetCreateSourceHash: const bool.fromEnvironment('dart.vm.product')
+          ? null
+          : _$signUpFinalizingInProgressHash,
+      dependencies: null,
+      allTransitiveDependencies: null,
+    );
+
+typedef _$SignUpFinalizingInProgress = AutoDisposeNotifier<bool>;
+String _$registrationControllerHash() =>
+    r'f95153d9662f8b4ea39f968a3a9b4477c7eee338';
+
+/// Drives account creation on sign-up submit (no phone/OTP verification —
+/// phone is a plain data field, ARCHITECTURE.md §6):
+///  - reject duplicate phone numbers (`checkPhoneRegistered`);
+///  - create the Firebase Auth account directly with username+password;
+///  - create the `Users` doc;
+///  - volunteers additionally get the pending `Volunteers` sub-doc.
 ///
 /// Copied from [RegistrationController].
 @ProviderFor(RegistrationController)

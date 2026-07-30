@@ -66,12 +66,17 @@ service cloud.firestore {
       // A user reads only their own profile; admins may read (dashboard scope).
       allow read: if isSignedIn() && (uid() == userId || isAdmin());
 
-      // Self-create at first login. role fixed at create; password_hash forbidden.
+      // Self-create at first login (username+password, ARCHITECTURE.md §6).
+      // Phone is a plain, unverified data field. role fixed at create;
+      // charity_admin is provisioned out-of-band only, never via
+      // self-signup; password_hash forbidden (password lives in Firebase
+      // Auth, not Firestore).
       allow create: if isSignedIn() && uid() == userId
-        && request.resource.data.role in ['donor', 'volunteer', 'charity_admin']
+        && request.resource.data.role in ['donor', 'volunteer']
         && request.resource.data.keys().hasOnly(
-             ['user_id','name','phone','email','role','created_at'])
+             ['user_id','name','phone','email','role','username','created_at'])
         && request.resource.data.user_id == userId
+        && request.resource.data.username is string
         && isServerTimestamp(request.resource.data.created_at)
         && !('password_hash' in request.resource.data);
 
@@ -127,8 +132,12 @@ service cloud.firestore {
     }
 
     // ------------------------- Charities (Table 4.5) -----------------------
+    // Public read: the volunteer sign-up form's charity dropdown loads before
+    // account creation now (username+password migration, ARCHITECTURE.md §6
+    // item 15 — role-specific fields moved to sign-up, before OTP/auth).
+    // Non-sensitive seeded reference data (charity names/ids), so this is safe.
     match /Charities/{charityId} {
-      allow read: if isSignedIn();
+      allow read: if true;
       allow write: if false; // reference data managed by platform owner / server
     }
 

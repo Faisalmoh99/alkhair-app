@@ -82,19 +82,18 @@ Fonts: **Cairo** — four static-weight TTFs (Regular/Medium/SemiBold/Bold) decl
 
 ## 4. Data-flow per role (UI → Firestore and back)
 
-**Auth (all roles — Phase 2, the entry for every journey):**
+**Auth (all roles — username+password, no phone/OTP verification, item 18):**
 ```
-SignInScreen → authControllerProvider.requestOtp(phone)  [state machine §1.2]
-  → AuthRepository.requestOtp → FirebaseAuth.verifyPhoneNumber (App Check first)
-OtpScreen → confirmOtp(code) → signInWithCredential → uid
-  → authStatusControllerProvider loads Users(+Volunteers) → deriveAuthStage(...)
-    → GoRouter redirect (authRedirect) sends the user to their area:
-        no Users doc      → AccountTypeScreen → createUserProfile(role)
-        role=donor        → /donor/home
-        role=volunteer     → VolunteerExtraStepScreen: update Users.email +
-                             create Volunteers(approval_status=pending, charity_id)
-                             → pending view (folded in — see §6.5) until approved
-        role=charity_admin → /admin/dashboard
+SignUpScreen → RegistrationController.createFromSignUp(SignUpData)
+  → AuthRepository.checkPhoneRegistered(phone)  [plain uniqueness check]
+    → createUserWithUsernamePassword → FirebaseAuth.createUserWithEmailAndPassword → uid
+      → createUserProfile(role) [+ completeVolunteerRegistration for volunteers]
+        → authStatusControllerProvider loads Users(+Volunteers) → deriveAuthStage(...)
+          → GoRouter redirect (authRedirect) sends the user to their area:
+              role=donor        → /donor/home
+              role=volunteer     → VolunteerExtraStepScreen: pending view
+                                   (Volunteers.approval_status=pending) until approved
+              role=charity_admin → /admin/dashboard
 Claims: onUsersWrite / onVolunteerWrite (Cloud Functions) mirror role +
   approval_status + charity_id into custom claims and write claims_updated_at;
   the client force-refreshes its token. Firestore Rules remain authoritative.
@@ -416,6 +415,179 @@ never touches Firestore.
       standard, fully-reliable method for all Android emulator testing and demo recording going
       forward. **Flag for Chapter Six:** document as a known Android-emulator platform limitation,
       not a project defect.
+15. **Username + password replaces Phone/OTP as the login method — supervisor-directed
+    architectural change, supersedes item 1 above.** OTP is now a **sign-up/reset verification
+    step**, not the login mechanism itself.
+    - **Final flow:**
+      - **Sign-up** (one form: username, password, name, phone, role [donor/volunteer only —
+        see below], plus volunteer-only email/vehicle_type/charity): on submit, **no Firebase
+        Auth account or Firestore doc is created yet** — the form is held in memory only, and an
+        OTP is sent to the phone via the existing (unmodified) `requestOtp`/OTP-screen mechanism.
+        Only on OTP success: the chosen username+password is **linked** onto the OTP-verified
+        phone-auth account (`linkWithCredential`, not a second account — Firebase OTP inherently
+        signs in a phone-auth user, so linking avoids orphaned accounts), then the `Users` doc is
+        created with `phone_verified: true` baked in from creation (there is no unverified-account
+        state to manage — if OTP fails/expires/is abandoned, no account and no doc exist; the user
+        just restarts sign-up).
+      - **Login**: username + password only, no OTP. Firebase has no native username provider, so
+        username maps to a synthetic email `{username}@alkhair-app.internal` (never shown in UI)
+        for `signInWithEmailAndPassword`/the sign-up-time link. Firebase's own
+        `email-already-in-use` on link is the duplicate-username check — surfaced only **after**
+        OTP succeeds, never before (case 7 below).
+      - **Forgot password** (reuses the phone already on file — never re-entered): the user
+        enters only their username; a new callable, `lookupPhoneForUsername` (Admin SDK query,
+        since Firestore rules only allow reading one's own `Users` doc and an unauthenticated
+        client can't query by username directly), returns the phone or null. Unknown username →
+        generic "if this account exists…" message, no OTP sent, no navigation (avoids username
+        enumeration in the UI — though the callable's own response necessarily differs
+        found-vs-not-found, since the client needs the real number to call `requestOtp`; full
+        mitigation would need server-side SMS sending, out of scope). Known username → OTP sent
+        to that number, reusing the **same OTP screen component**, branched by `flowMode` to a
+        "set new password" completion instead of account creation. Re-authenticating via OTP
+        signs back into the *same* uid (the phone was linked to it at sign-up), so
+        `updatePassword` is called — no `linkWithCredential`, this is a reset, not account
+        creation. A `passwordResetInProgressProvider` flag overrides the router's normal stage
+        derivation for the whole flow — without it, an *existing* user's OTP re-auth would
+        redirect them straight to their home screen (their `Users` doc already exists) before
+        they ever set a new password.
+    - **Charity Admin excluded from self-signup.** The signup form offers Donor/Volunteer only;
+      `CharityAdmins` remains provisioned out-of-band per the existing security model
+      (`firestore.rules`: "no client writes"). `firestore.rules`' `Users` create rule's role set
+      was tightened from `['donor','volunteer','charity_admin']` to `['donor','volunteer']`,
+      closing a self-escalation path that existed (unused) before this change.
+    - **Data-dictionary reinterpretations, recorded rather than silently resolved:**
+      - **`password_hash` (Table 4.2)** — item 1 above called it "unused" because auth was
+        OTP-only. The new flow *does* use a password, but it is held by **Firebase Auth**, not
+        Firestore — `firestore.rules` still forbids a `password_hash` field on the `Users` doc, so
+        the dictionary field remains unpopulated by design, just for a different reason now.
+      - **Fig 5.1's "password" field** — item 1 reinterpreted it as OTP entry. That reinterpretation
+        is now reversed: the new username+password login is, if anything, more literal to the figure.
+      - **`username` / `phone_verified`** — new `Users` fields not in Table 4.2's original set;
+        added to `firestore.rules`' `hasOnly` allow-list and required at create time.
+    - **Files:** `lib/features/auth/**` (new: `login_screen.dart`, `sign_up_screen.dart`,
+      `forgot_password_screen.dart`, `sign_up_data.dart`, `password_reset_controller.dart`;
+      `otp_screen.dart` modified in place, reused unmodified logic for `requestOtp`/`confirmOtp`;
+      `account_type_screen.dart` deleted, role now collected at sign-up); `firestore.rules`
+      (`Users` create rule); `functions/src/lookup_phone_for_username.ts` (new callable,
+      rate-limited per-username like `create_donation_report.ts`'s per-donor limiter);
+      `core/router/app_router.dart` + `auth_guard.dart` (new routes, `passwordResetInProgress`
+      override).
+    - **Manual action (not blocking this change):** the Email/Password sign-in provider must be
+      enabled in the Firebase Console — without it, `linkWithCredential`/
+      `signInWithEmailAndPassword` throw `operation-not-allowed`.
+16. **Four bugs found in manual testing of item 15, fixed same session:**
+    - **UI overflow** on `login_screen.dart`/`forgot_password_screen.dart`/`otp_screen.dart` (both
+      views) — fixed-height `Column`s with no scroll container overflowed when the keyboard
+      shrank the viewport. Wrapped each in `SingleChildScrollView` (login additionally needs
+      `LayoutBuilder` + `ConstrainedBox(minHeight)` + `IntrinsicHeight` to keep its `Spacer`-based
+      centering while remaining scrollable).
+    - **Duplicate-phone reuse at sign-up (root cause of two reported symptoms at once).** Firebase
+      Phone Auth doesn't dedupe by number at OTP-send time: signing up with an already-registered
+      number silently re-authenticates into that *existing* account during `confirmOtp` (phone
+      credentials always resolve to whoever owns the number), then `linkUsernamePassword` fails
+      with `provider-already-linked` — and because that sign-in was never undone, the device was
+      left authenticated as an unrelated pre-existing account, whose real profile then drove the
+      router away from the OTP screen the user was still trying to use. This is what "navigates to
+      login/somewhere unexpected right after sending the code" actually was — confirmed by a
+      controlled repro test (`signup_navigation_repro_test.dart`) that reproduced the *fresh*-number
+      path working correctly, isolating the defect to number reuse specifically. Fixed with a new
+      pre-send check: `checkPhoneRegistered` callable (Admin SDK query, rate-limited per-phone,
+      same pattern as `lookupPhoneForUsername`) rejects an already-registered phone in
+      `AuthController.startSignUp` before any OTP is ever sent. Belt-and-suspenders:
+      `provider-already-linked` now maps to a clear `phone-already-registered` message, and
+      `RegistrationController.createFromSignUp` signs back out on *any* failure branch so a failed
+      link/create never leaves the device silently authenticated as someone else's account.
+    - **Charities read denied pre-auth for volunteer sign-up.** `firestore.rules`' `Charities` read
+      required `isSignedIn()`, but the charity dropdown now loads on the sign-up form itself,
+      before OTP/auth (item 15 moved role-specific fields earlier in the flow without re-checking
+      what their data needs). Fixed by making `Charities` read public (`allow read: if true`) —
+      confirmed safe: non-sensitive seeded reference data, already shown to every signed-in user;
+      write stays `if false`.
+    - **Files:** `login_screen.dart`, `forgot_password_screen.dart`, `otp_screen.dart` (scroll
+      fixes); `functions/src/check_phone_registered.ts` + test (new); `auth_repository.dart` +
+      `firebase_auth_repository.dart` (`checkPhoneRegistered`, `provider-already-linked` mapping);
+      `auth_controller.dart` (`startSignUp` pre-check); `registration_controller.dart` (sign-out on
+      failure); `app_error_messages.dart` (`phone-already-registered`); `firestore.rules`
+      (`Charities` read).
+17. **Item 16's bug-2 fix was real but incomplete — a second, independent cause of the same
+    symptom (sign-up never reaches the OTP screen) was found on real-SMS devices (iPhone
+    simulator, macOS), reproduced fresh with a new phone number, no duplicate-phone involved.**
+    - **Root cause:** `FirebaseAuthRepository.requestOtp` (data layer) did
+      `await _auth.verifyPhoneNumber(...); return completer.future;`. `verifyPhoneNumber` is
+      **callback-driven** — `codeSent`/`verificationFailed` complete `completer` — but the method
+      is `async`, so `return completer.future` (and therefore the whole `requestOtp` call) only
+      runs once `verifyPhoneNumber`'s *own* returned `Future` resolves. On the
+      emulator/test-number path that Future resolves promptly, which is why every prior
+      automated/manual test passed. On the real-SMS path (iOS simulator's reCAPTCHA-webview
+      fallback; macOS) that Future can stay pending long after `codeSent` already fired —
+      trapping the already-completed `completer` behind the `await` and hanging `requestOtp`
+      forever. The UI symptom (button spins, no navigation) matched item 16's bug 2 description,
+      which led to that fix stopping short of finding this.
+    - **Fix:** stop awaiting `verifyPhoneNumber`; fire it via `unawaited(...)` and let the
+      `codeSent`/`verificationFailed` callbacks (unchanged) drive `completer`, funneling any
+      Future-level failure through `.catchError` into the same completer (a `try/catch` around
+      the call itself still covers a synchronous throw). `codeAutoRetrievalTimeout` and the
+      Android-auto-retrieval no-op are unchanged.
+    - **Why no test caught it originally:** every prior test (all 210 at the time) mocks
+      `AuthRepository.requestOtp` at the interface, so the real `Completer` +
+      `await verifyPhoneNumber` + callback plumbing was never exercised. Added a repo-level
+      regression test (`firebase_auth_repository_test.dart`, `requestOtp` group) that stubs
+      `verifyPhoneNumber` to invoke `codeSent` synchronously while returning a `Future` that
+      never completes — reproducing the real-SMS shape. Verified this test genuinely fails
+      (times out) against the pre-fix code and passes after, before treating it as done.
+    - **Files:** `firebase_auth_repository.dart` (`requestOtp` only);
+      `firebase_auth_repository_test.dart` (new `requestOtp` regression test).
+
+18. **Phone/OTP verification removed entirely — supersedes item 15's phone-OTP
+    verification step (items 16 and 17's fixes are now moot).**
+    - **Why:** items 14/16/17 traced a chain of real, independent bugs to the phone-verification
+      step itself — iOS reCAPTCHA-webview fallback instability (item 17's real-SMS hang), the
+      `SceneDelegate` URL-swallowing lifecycle hack required to keep that fallback from tearing
+      down mid-verification screens (item 13), and the Android Play Integrity /
+      `forceRecaptchaFlow` dead-end (reverted; see decisions log memory). Each fix addressed one
+      symptom and another appeared; verification bought little for this app's threat model
+      (username+password is already the actual authentication credential) while costing
+      disproportionate fragility across sign-up and password-reset. Decision: drop verification,
+      keep phone as a plain, unverified data field (validated only for Saudi format, like `name`).
+    - **New sign-up flow:** the form collects the same fields (username, password, name, phone,
+      role, + volunteer's email/vehicle_type/charity_id); on submit,
+      `RegistrationController.createFromSignUp` runs `checkPhoneRegistered` (kept as a plain
+      duplicate-phone uniqueness check, no longer racing auth state) →
+      `createUserWithUsernamePassword` (direct `createUserWithEmailAndPassword`, no
+      OTP-verified account to link onto) → `createUserProfile` (no `phone_verified` field —
+      removed from the schema entirely, not just defaulted) → volunteer's
+      `completeVolunteerRegistration` → role-claim wait → admit. No OTP screen anywhere in
+      sign-up.
+    - **Forgot-password:** the self-service phone-OTP reset is replaced with a static
+      support-mediated screen (`ForgotPasswordScreen` — contact charity admin / Al-Khair
+      support). Accounts use non-deliverable synthetic emails
+      (`username@alkhair-app.internal`) and donors have no real email on file, so no
+      self-service email reset is possible without new infrastructure (collecting a real email
+      for all roles + an email-sending provider) — out of scope for this pass. Actual resets
+      happen out-of-band (Firebase console / a future admin tool).
+    - **Removed:** `otp_screen.dart`, `AuthController`/`AuthFlowState`/`OtpPhase`/`FlowMode`,
+      `password_reset_controller.dart`, the `requestOtp`/`confirmOtp`/`linkUsernamePassword`/
+      `lookupPhoneForUsername`/`updatePasswordAfterReset` repository methods, the
+      `lookupPhoneForUsername` Cloud Function, the `/sign-up/otp` and
+      `/login/forgot-password/otp` routes and the router's `passwordResetInProgress` override,
+      the iOS `SceneDelegate` URL-swallowing block and its `Info.plist` `CFBundleURLTypes`
+      scheme, `phone_verified` from the `Users` schema (Firestore rules + `createUserProfile`),
+      and the `integration_test/` live-signup repro harness (its only consumer).
+    - **Kept:** `checkPhoneRegistered` (repurposed as a plain uniqueness check),
+      `signInWithUsernamePassword`, `RegistrationController` (repurposed as the single
+      account-creation orchestrator), `signUpFinalizingInProgressProvider` (still guards the
+      window between Firebase Auth sign-in and the `Users` doc write — same race, different
+      trigger), and the donor/volunteer-only self-create role restriction in `firestore.rules`.
+    - **Files:** `firebase_auth_repository.dart` + `auth_repository.dart`,
+      `registration_controller.dart`, `sign_up_screen.dart`, `forgot_password_screen.dart`
+      (rewritten), `app_router.dart`, `auth_guard.dart`, `firestore.rules`,
+      `functions/src/index.ts` (+ deleted `lookup_phone_for_username.ts`),
+      `ios/Runner/SceneDelegate.swift` + `Info.plist`; deleted `otp_screen.dart`,
+      `auth_controller.dart`, `password_reset_controller.dart`, `integration_test/`; test suites
+      updated accordingly (`firebase_auth_repository_test.dart`, `registration_controller_test.dart`,
+      `auth_guard_test.dart`, `rules.spec.ts`; deleted `auth_controller_test.dart`,
+      `password_reset_controller_test.dart`, `signup_navigation_repro_test.dart`,
+      `lookup_phone_for_username.spec.ts`).
 
 ## 7. Visual identity (Chapter Five + kickoff)
 

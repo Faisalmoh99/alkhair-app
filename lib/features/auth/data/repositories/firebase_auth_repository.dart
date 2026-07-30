@@ -1,87 +1,45 @@
-import 'dart:async';
-
 import 'package:alkhair_app/core/constants/app_constants.dart';
 import 'package:alkhair_app/core/constants/enums.dart';
 import 'package:alkhair_app/core/errors/failures.dart';
+import 'package:alkhair_app/core/utils/username_email.dart';
 import 'package:alkhair_app/features/auth/domain/entities/app_user.dart';
 import 'package:alkhair_app/features/auth/domain/entities/charity.dart';
 import 'package:alkhair_app/features/auth/domain/repositories/auth_repository.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/foundation.dart';
 import 'package:fpdart/fpdart.dart';
 
-/// Firebase-concrete [AuthRepository]: Phone Auth + Firestore Users/Volunteers/
-/// Charities. Raw exceptions are translated into [Failure] at this boundary
-/// (SECURITY.md §7); this class is exercised end-to-end in Track B / Phase 7.
+/// Firebase-concrete [AuthRepository]: username+password Auth + Firestore
+/// Users/Volunteers/Charities. Raw exceptions are translated into [Failure]
+/// at this boundary (SECURITY.md §7); this class is exercised end-to-end in
+/// Track B / Phase 7.
 class FirebaseAuthRepository implements AuthRepository {
   FirebaseAuthRepository({
     required FirebaseAuth auth,
     required FirebaseFirestore firestore,
+    required FirebaseFunctions functions,
   })  : _auth = auth,
-        _db = firestore;
+        _db = firestore,
+        _functions = functions;
 
   final FirebaseAuth _auth;
   final FirebaseFirestore _db;
+  final FirebaseFunctions _functions;
 
   @override
   Stream<String?> authStateChanges() =>
       _auth.authStateChanges().map((user) => user?.uid);
 
   @override
-  Future<Either<Failure, String>> requestOtp(String phone) async {
-    final completer = Completer<Either<Failure, String>>();
-    debugPrint(
-      '[Al-Khair] verifyPhoneNumber about to call — phone="$phone" '
-      'auth.app.name="${_auth.app.name}" projectId="${_auth.app.options.projectId}"',
-    );
+  Future<Either<Failure, bool>> checkPhoneRegistered(String phone) async {
     try {
-      await _auth.verifyPhoneNumber(
-        phoneNumber: phone,
-        verificationCompleted: (_) {
-          // Android auto-retrieval; the manual OTP screen drives confirmOtp.
-        },
-        verificationFailed: (e) {
-          debugPrint('[Al-Khair] verificationFailed: code="${e.code}" message="${e.message}"');
-          if (!completer.isCompleted) {
-            completer.complete(left(Failure.auth(code: e.code)));
-          }
-        },
-        codeSent: (verificationId, _) {
-          debugPrint('[Al-Khair] codeSent — verificationId="$verificationId"');
-          if (!completer.isCompleted) {
-            completer.complete(right(verificationId));
-          }
-        },
-        codeAutoRetrievalTimeout: (_) {},
-      );
-    } on FirebaseAuthException catch (e) {
-      debugPrint('[Al-Khair] verifyPhoneNumber threw FirebaseAuthException: code="${e.code}" message="${e.message}"');
-      if (!completer.isCompleted) {
-        completer.complete(left(Failure.auth(code: e.code)));
-      }
-    }
-    return completer.future;
-  }
-
-  @override
-  Future<Either<Failure, String>> confirmOtp({
-    required String verificationId,
-    required String smsCode,
-  }) async {
-    try {
-      final credential = PhoneAuthProvider.credential(
-        verificationId: verificationId,
-        smsCode: smsCode,
-      );
-      final result = await _auth.signInWithCredential(credential);
-      final uid = result.user?.uid;
-      if (uid == null) {
-        return left(const Failure.auth(code: 'sign-in-failed'));
-      }
-      return right(uid);
-    } on FirebaseAuthException catch (e) {
-      return left(Failure.auth(code: e.code));
+      final callable = _functions.httpsCallable('checkPhoneRegistered');
+      final result = await callable.call<dynamic>({'phone': phone});
+      final data = Map<String, dynamic>.from(result.data as Map);
+      return right(data['registered'] as bool? ?? false);
+    } on FirebaseFunctionsException catch (e) {
+      return left(_mapFunctions(e));
     }
   }
 
@@ -135,6 +93,7 @@ class FirebaseAuthRepository implements AuthRepository {
     required String uid,
     required String name,
     required String phone,
+    required String username,
     required UserRole role,
   }) async {
     try {
@@ -142,6 +101,7 @@ class FirebaseAuthRepository implements AuthRepository {
         'user_id': uid,
         'name': name,
         'phone': phone,
+        'username': username,
         'role': role.firestoreValue,
         'created_at': FieldValue.serverTimestamp(),
       });
@@ -150,6 +110,67 @@ class FirebaseAuthRepository implements AuthRepository {
       return left(_mapFirestore(e));
     }
   }
+
+  @override
+  Future<Either<Failure, String>> createUserWithUsernamePassword({
+    required String username,
+    required String password,
+  }) async {
+    try {
+      final result = await _auth.createUserWithEmailAndPassword(
+        email: usernameToEmail(username),
+        password: password,
+      );
+      final uid = result.user?.uid;
+      if (uid == null) {
+        return left(const Failure.auth(code: 'sign-in-failed'));
+      }
+      return right(uid);
+    } on FirebaseAuthException catch (e) {
+      return left(Failure.auth(code: _mapUsernamePasswordCode(e.code)));
+    }
+  }
+
+  @override
+  Future<Either<Failure, String>> signInWithUsernamePassword({
+    required String username,
+    required String password,
+  }) async {
+    try {
+      final result = await _auth.signInWithEmailAndPassword(
+        email: usernameToEmail(username),
+        password: password,
+      );
+      final uid = result.user?.uid;
+      if (uid == null) {
+        return left(const Failure.auth(code: 'sign-in-failed'));
+      }
+      return right(uid);
+    } on FirebaseAuthException catch (e) {
+      return left(Failure.auth(code: _mapUsernamePasswordCode(e.code)));
+    }
+  }
+
+  // email-already-in-use: create-time — username taken (error case 7).
+  // wrong-password/user-not-found/invalid-credential: sign-in — bad credentials.
+  // weak-password: password too short (error case 8, also inline-validated).
+  String _mapUsernamePasswordCode(String code) => switch (code) {
+        'email-already-in-use' ||
+        'credential-already-in-use' =>
+          'username-already-in-use',
+        'weak-password' => 'weak-password',
+        'wrong-password' ||
+        'user-not-found' ||
+        'invalid-credential' =>
+          'invalid-credentials',
+        _ => code,
+      };
+
+  Failure _mapFunctions(FirebaseFunctionsException e) => switch (e.code) {
+        'resource-exhausted' => const Failure.rateLimit(),
+        'unavailable' => const Failure.network(),
+        _ => Failure.unknown(message: e.code),
+      };
 
   @override
   Future<Either<Failure, void>> completeVolunteerRegistration({

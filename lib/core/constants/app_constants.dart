@@ -39,6 +39,10 @@ const Duration kMinSplashDuration = Duration(seconds: 2);
 // two runtimes can't share a constant.
 const num kMaxDonationQuantity = 100000;
 
+// Username → synthetic email mapping for Email/Password auth (no native
+// Firebase username provider). Never surfaced in UI.
+const String kSyntheticEmailDomain = '@alkhair-app.internal';
+
 // Maps API key placeholders — replaced via --dart-define in CI/CD (SECURITY.md §6).
 const String kMapsApiKeyAndroid = String.fromEnvironment('MAPS_API_KEY_ANDROID');
 const String kMapsApiKeyIos = String.fromEnvironment('MAPS_API_KEY_IOS');

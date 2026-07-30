@@ -6,7 +6,23 @@ import 'package:alkhair_app/features/auth/domain/entities/auth_stage.dart';
 ///
 /// No Firebase, no widgets — exhaustively unit-tested (TEST_PLAN.md 2c: role
 /// isolation). Enforces that each role can only reach its own area.
-String? authRedirect({required AuthStage stage, required String location}) {
+///
+/// [signUpFinalizingInProgress] guards a race: account creation
+/// (`createUserWithEmailAndPassword`) signs the user into Firebase Auth (so
+/// `AuthStatusController` starts reacting) before the app's own
+/// post-creation work — writing the `Users` doc, waiting for the role claim
+/// — has finished. Without this, the stage derived from Firestore could
+/// transiently look unauthenticated/needs-profile and bounce the user around
+/// mid-creation. While true, hold on the sign-up screen regardless of
+/// derived stage.
+String? authRedirect({
+  required AuthStage stage,
+  required String location,
+  bool signUpFinalizingInProgress = false,
+}) {
+  if (signUpFinalizingInProgress) {
+    return location == Routes.signUp ? null : Routes.signUp;
+  }
   if (_isAllowed(stage, location)) {
     return null;
   }
@@ -15,8 +31,10 @@ String? authRedirect({required AuthStage stage, required String location}) {
 
 /// The single landing route each stage is sent to.
 String _homeFor(AuthStage stage) => switch (stage) {
-      AuthStage.unauthenticated => Routes.signIn,
-      AuthStage.needsProfile => Routes.accountType,
+      AuthStage.unauthenticated => Routes.login,
+      // Signed in, `Users` doc not written yet — stay on sign-up to finish
+      // account creation.
+      AuthStage.needsProfile => Routes.signUp,
       AuthStage.donor => Routes.donorHome,
       AuthStage.volunteerNeedsDetails => Routes.volunteerExtra,
       AuthStage.volunteerPending => Routes.volunteerExtra,
@@ -27,9 +45,10 @@ String _homeFor(AuthStage stage) => switch (stage) {
 
 /// Whether [location] is within the area allowed for [stage].
 bool _isAllowed(AuthStage stage, String location) => switch (stage) {
-      AuthStage.unauthenticated =>
-        location == Routes.signIn || location == Routes.otp,
-      AuthStage.needsProfile => location == Routes.accountType,
+      AuthStage.unauthenticated => location == Routes.login ||
+          location == Routes.signUp ||
+          location == Routes.forgotPassword,
+      AuthStage.needsProfile => location == Routes.signUp,
       AuthStage.volunteerNeedsDetails ||
       AuthStage.volunteerPending ||
       AuthStage.volunteerRevoked =>

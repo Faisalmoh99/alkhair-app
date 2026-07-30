@@ -78,7 +78,7 @@ final firebaseFunctionsProvider = Provider<FirebaseFunctions>.internal(
 @Deprecated('Will be removed in 3.0. Use Ref instead')
 // ignore: unused_element
 typedef FirebaseFunctionsRef = ProviderRef<FirebaseFunctions>;
-String _$authRepositoryHash() => r'a6509d3c509774da42bfe127e1b2f31e672102f3';
+String _$authRepositoryHash() => r'bf73a2a8280fe4656b581376a65942b88151ef1e';
 
 /// The single seam the whole auth feature depends on. Overridden with a mock in
 /// unit tests and with the real Firebase implementation in the app.

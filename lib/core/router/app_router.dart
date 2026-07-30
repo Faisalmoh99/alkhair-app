@@ -1,9 +1,10 @@
 import 'package:alkhair_app/core/router/auth_guard.dart';
 import 'package:alkhair_app/features/auth/domain/entities/auth_stage.dart';
 import 'package:alkhair_app/features/auth/presentation/controllers/auth_status_controller.dart';
-import 'package:alkhair_app/features/auth/presentation/screens/account_type_screen.dart';
-import 'package:alkhair_app/features/auth/presentation/screens/otp_screen.dart';
-import 'package:alkhair_app/features/auth/presentation/screens/sign_in_screen.dart';
+import 'package:alkhair_app/features/auth/presentation/controllers/registration_controller.dart';
+import 'package:alkhair_app/features/auth/presentation/screens/forgot_password_screen.dart';
+import 'package:alkhair_app/features/auth/presentation/screens/login_screen.dart';
+import 'package:alkhair_app/features/auth/presentation/screens/sign_up_screen.dart';
 import 'package:alkhair_app/features/auth/presentation/screens/splash_screen.dart';
 import 'package:alkhair_app/features/auth/presentation/screens/volunteer_extra_step_screen.dart';
 import 'package:alkhair_app/features/charity_admin/presentation/screens/admin_dashboard_screen.dart';
@@ -29,10 +30,11 @@ part 'app_router.g.dart';
 /// area prefix (`/donor`, `/volunteer`, `/admin`) enforced by [authRedirect].
 abstract final class Routes {
   static const String splash = '/';
-  // Auth (Phase 2)
-  static const String signIn = '/sign-in';
-  static const String otp = '/sign-in/otp';
-  static const String accountType = '/sign-in/account-type';
+  // Auth — username+password (ARCHITECTURE.md §6). Phone is a plain data
+  // field, never verified.
+  static const String login = '/login';
+  static const String signUp = '/sign-up';
+  static const String forgotPassword = '/login/forgot-password';
   static const String volunteerExtra = '/sign-in/volunteer-details';
   // Role landings
   static const String donorHome = '/donor/home';
@@ -52,19 +54,69 @@ abstract final class Routes {
   static const String reportCategory = '/admin/reports/category';
   static const String reportPerformance = '/admin/reports/performance';
   static const String reportExport = '/admin/reports/export';
+
+  /// All paths this app actually defines a [GoRoute] for. Used to ignore
+  /// stray platform-level URLs instead of letting [authRedirect] treat them
+  /// as disallowed and bounce the user to their stage's home mid-flow.
+  static const Set<String> known = {
+    splash,
+    login,
+    signUp,
+    forgotPassword,
+    volunteerExtra,
+    donorHome,
+    volunteerHome,
+    adminDashboard,
+    donorReport,
+    donorStatus,
+    volunteerAlert,
+    volunteerNav,
+    adminVolunteers,
+    reportsDirectory,
+    reportMonthly,
+    reportCategory,
+    reportPerformance,
+    reportExport,
+  };
 }
 
-/// The app router. Redirects are driven by [authStatusControllerProvider]: the
-/// stage is bridged into a [ValueNotifier] that GoRouter listens to, so the
-/// router is created once and re-evaluates guards whenever the stage changes.
+/// Bridges [authStatusControllerProvider] and
+/// [signUpFinalizingInProgressProvider] into a single [Listenable] GoRouter
+/// can watch — either can change the redirect outcome, so each must trigger
+/// a re-evaluation, not just the stage (see [authRedirect]'s
+/// `signUpFinalizingInProgress` override).
+class _RouterRefresh extends ChangeNotifier {
+  AsyncValue<AuthStage> stage = const AsyncLoading();
+  bool signUpFinalizingInProgress = false;
+
+  void setStage(AsyncValue<AuthStage> value) {
+    stage = value;
+    notifyListeners();
+  }
+
+  void setSignUpFinalizingInProgress({required bool inProgress}) {
+    signUpFinalizingInProgress = inProgress;
+    notifyListeners();
+  }
+}
+
+/// The app router. Redirects are driven by [authStatusControllerProvider]
+/// and [signUpFinalizingInProgressProvider], bridged into [_RouterRefresh]
+/// so the router is created once and re-evaluates guards whenever either
+/// changes.
 @Riverpod(keepAlive: true)
 GoRouter appRouter(AppRouterRef ref) {
-  final refresh = ValueNotifier<AsyncValue<AuthStage>>(const AsyncLoading());
+  final refresh = _RouterRefresh();
   ref
     ..onDispose(refresh.dispose)
     ..listen(
       authStatusControllerProvider,
-      (_, next) => refresh.value = next,
+      (_, next) => refresh.setStage(next),
+      fireImmediately: true,
+    )
+    ..listen(
+      signUpFinalizingInProgressProvider,
+      (_, next) => refresh.setSignUpFinalizingInProgress(inProgress: next),
       fireImmediately: true,
     );
 
@@ -72,10 +124,19 @@ GoRouter appRouter(AppRouterRef ref) {
     initialLocation: Routes.splash,
     refreshListenable: refresh,
     redirect: (context, state) {
+      // Ignore stray platform-level URLs that aren't one of our routes
+      // instead of treating them as disallowed and bouncing to the stage's
+      // home mid-flow.
+      if (!Routes.known.contains(state.matchedLocation)) {
+        return null;
+      }
       // While the stage is still resolving, hold on the splash screen.
-      return refresh.value.maybeWhen(
-        data: (stage) =>
-            authRedirect(stage: stage, location: state.matchedLocation),
+      return refresh.stage.maybeWhen(
+        data: (stage) => authRedirect(
+          stage: stage,
+          location: state.matchedLocation,
+          signUpFinalizingInProgress: refresh.signUpFinalizingInProgress,
+        ),
         orElse: () => null,
       );
     },
@@ -85,16 +146,16 @@ GoRouter appRouter(AppRouterRef ref) {
         builder: (_, __) => const SplashScreen(),
       ),
       GoRoute(
-        path: Routes.signIn,
-        builder: (_, __) => const SignInScreen(),
+        path: Routes.login,
+        builder: (_, __) => const LoginScreen(),
       ),
       GoRoute(
-        path: Routes.otp,
-        builder: (_, __) => const OtpScreen(),
+        path: Routes.signUp,
+        builder: (_, __) => const SignUpScreen(),
       ),
       GoRoute(
-        path: Routes.accountType,
-        builder: (_, __) => const AccountTypeScreen(),
+        path: Routes.forgotPassword,
+        builder: (_, __) => const ForgotPasswordScreen(),
       ),
       GoRoute(
         path: Routes.volunteerExtra,
